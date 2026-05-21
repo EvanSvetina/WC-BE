@@ -199,7 +199,11 @@ def search_users():
     if not q:
         return jsonify([])
     matches = User.query.filter(
-        User.username.ilike(f"%{q}%"),
+        db.or_(
+            User.username.ilike(f"%{q}%"),
+            User.first_name.ilike(f"%{q}%"),
+            User.last_name.ilike(f"%{q}%"),
+        ),
         User.id != user.id,
     ).limit(20).all()
     result = []
