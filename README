@@ -1,66 +1,188 @@
-# PWC Backend
+# Poway Woman's Club — API (Backend)
 
-Flask API for the Poway Woman's Club website.
+The **backend API** for the Poway Woman's Club website. A
+[Flask](https://flask.palletsprojects.com/) application that handles
+authentication, events and RSVPs, the club blog, groups, member profiles,
+messaging, and payments.
 
-## Setup
+The [frontend](https://github.com/Poway-Women-s-Club/pwc) (a Jekyll site on
+GitHub Pages) calls this API for all of its interactive features.
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # edit with your secrets
-python main.py          # runs on http://localhost:8327
+- **Backend (this repo):** [`Poway-Women-s-Club/pwc-flask`](https://github.com/Poway-Women-s-Club/pwc-flask)
+- **Frontend:** [`Poway-Women-s-Club/pwc`](https://github.com/Poway-Women-s-Club/pwc)
+
+---
+
+## Tech stack
+
+- **Flask 3** with an application-factory pattern (`create_app` in `app.py`)
+- **Flask-SQLAlchemy** for the database (SQLite by default; PostgreSQL supported)
+- **Flask-Login** for session-based authentication
+- **Flask-CORS** for cross-origin requests from the GitHub Pages frontend
+- **APScheduler** for background event-reminder jobs
+- **Pillow** for avatar image handling
+- Google OAuth and SMTP email (both optional)
+- **Docker** support for deployment
+
+---
+
+## Project structure
+
+```
+pwc-flask/
+├── app.py               Application factory: config, extensions, blueprints, seeding
+├── main.py               Entry point — runs the app on port 8327
+├── api/                  Route blueprints
+│   ├── auth.py            Register / login / logout / Google OAuth
+│   ├── events.py          Events, RSVPs, public RSVPs, meeting requests
+│   ├── blog.py            Posts, comments, pinning
+│   ├── groups.py          Groups and group applications
+│   ├── messages.py        Member-to-member messaging
+│   ├── friends.py         Friend requests and connections
+│   ├── profile.py         Profiles, avatars, recommendations
+│   ├── payments.py        Membership dues (stub) and history
+│   ├── admin.py           Admin dashboard, user management
+│   └── reminder_jobs.py   Background event-reminder logic
+├── model/                SQLAlchemy models (User, Event, BlogPost, Group, …)
+├── services/             Email and recommendation helpers
+├── templates/            Server-rendered admin page
+├── instance/             SQLite database + uploaded avatars (created at runtime)
+├── Dockerfile            Production image (gunicorn)
+└── docker-compose.yml    Container orchestration
 ```
 
-A default admin account is seeded on first run:
-- username: `admin`
-- password: `admin`
+---
 
-Change the password immediately.
+## Running locally
 
-## API Endpoints
+You need **Python 3.11+**.
 
-### Auth (`/api/auth`)
+```bash
+# 1. Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Create your environment file
+cp .env.example .env       # then edit it with your values
+
+# 4. Run the API (http://localhost:8327)
+python main.py
+```
+
+On first run, the app creates the database and seeds a default admin account:
+
+- **username:** `admin`
+- **password:** `admin`
+
+**Change this password immediately** after first login.
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in the values you need. Key settings:
+
+| Variable | Purpose |
+|----------|---------|
+| `SECRET_KEY` | Flask session signing key. Set a real value in production. |
+| `DATABASE_URL` | Database connection string. Defaults to SQLite. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth (optional — leave blank to disable). |
+| `FRONTEND_URL` / `CORS_EXTRA_ORIGINS` | Allowed origins for CORS and OAuth redirects. |
+| `PUBLIC_BASE_URL` | Public URL of this API, used for absolute avatar links. |
+| `SESSION_COOKIE_CROSS_SITE` | Set to `1` when frontend and API are on different HTTPS domains. |
+| `MAIL_*` | SMTP settings for event-reminder emails (optional). |
+
+> **Local vs. deployed cookies:** On plain `http://localhost`, leave
+> `SESSION_COOKIE_CROSS_SITE` unset. When the frontend (GitHub Pages, HTTPS) and
+> this API are on different HTTPS hosts, set `SESSION_COOKIE_CROSS_SITE=1` so
+> browsers send session cookies on API calls.
+
+---
+
+## API overview
+
+All routes are prefixed with `/api`. A health check is available at
+`/api/health` (returns `{"status":"ok"}`).
+
+| Blueprint | Prefix | Handles |
+|-----------|--------|---------|
+| Auth | `/api/auth` | Register, login, logout, current user, Google OAuth |
+| Events | `/api/events` | Events, RSVPs, public RSVPs, meeting requests, attendee counts |
+| Blog | `/api/blog` | Posts, comments, pinning |
+| Groups | `/api/groups` | Groups, membership, join applications |
+| Messages | `/api/messages` | Conversations and unread counts |
+| Friends | `/api/friends` | Friend requests, status, search |
+| Profile | `/api/profile` | Profiles, avatars, password changes, recommendations |
+| Payments | `/api/payments` | Membership dues and payment history |
+| Admin | `/api/admin` | Dashboard stats and user management |
+
+### Selected endpoints
+
+**Auth (`/api/auth`)**
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/register` | No | `{username, email, password}` |
 | POST | `/login` | No | `{username, password}` (username or email) |
-| POST | `/logout` | Yes | Ends session |
-| GET | `/me` | Yes | Returns current user |
-| POST | `/google` | No | `{code, redirect_uri}` — Google OAuth |
+| POST | `/logout` | Yes | End the session |
+| GET | `/me` | Yes | Return the current user |
+| POST | `/google` | No | Google OAuth sign-in |
 
-### Events (`/api/events`)
+**Events (`/api/events`)**
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/` | No | List events (`?upcoming=true`) |
-| GET | `/:id` | No | Single event |
-| POST | `/` | Admin | `{title, description, location, start_time, end_time}` |
-| PUT | `/:id` | Admin | Update event |
-| DELETE | `/:id` | Admin | Delete event |
-| POST | `/:id/rsvp` | Yes | RSVP to event |
-| DELETE | `/:id/rsvp` | Yes | Cancel RSVP |
+| GET | `/` | No | List events |
+| GET | `/<id>` | No | Single event |
+| POST | `/` | Admin | Create an event |
+| PUT/DELETE | `/<id>` | Admin | Update or delete an event |
+| POST/DELETE | `/<id>/rsvp` | Yes | RSVP or cancel RSVP |
+| POST | `/public-rsvp` | No | RSVP as a non-member visitor |
+| POST | `/meeting-request` | No | Request a meeting |
 
-### Blog (`/api/blog`)
+**Blog (`/api/blog`)**
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/posts` | No | List posts |
-| GET | `/posts/:id` | No | Single post with comments |
-| POST | `/posts` | Yes | `{title, body}` |
-| PUT | `/posts/:id` | Author/Admin | Update post |
-| DELETE | `/posts/:id` | Author/Admin | Delete post |
-| POST | `/posts/:id/comments` | Yes | `{body}` |
-| DELETE | `/comments/:id` | Author/Admin | Delete comment |
+| GET | `/posts/<id>` | No | Single post with comments |
+| POST | `/posts` | Yes | Create a post |
+| PUT/DELETE | `/posts/<id>` | Author/Admin | Update or delete a post |
+| POST/DELETE | `/posts/<id>/pin` | Officer/Admin | Pin or unpin a post |
+| POST | `/posts/<id>/comments` | Yes | Add a comment |
 
-### Payments (`/api/payments`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/dues` | Yes | Pay membership (stub) |
-| GET | `/history` | Yes | User's payment history |
+See the blueprint files in `api/` for the full route list.
 
-### Admin (`/api/admin`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/stats` | Admin | Dashboard stats |
-| GET | `/users` | Admin | List all users |
-| PUT | `/users/:id` | Admin | Update role / membership |
-| DELETE | `/users/:id` | Admin | Delete user |
+---
+
+## Deployment with Docker
+
+```bash
+docker compose up --build
+```
+
+This builds the image and runs the API on port `8327` using gunicorn. The
+`instance/` directory is mounted as a volume so the database and uploaded
+avatars persist across restarts. A sample nginx reverse-proxy config is
+included in `nginx_file` and `deploy/`.
+
+For production, uncomment `gunicorn` and `psycopg2-binary` in
+`requirements.txt` if you plan to use PostgreSQL instead of SQLite.
+
+---
+
+## Security notes
+
+- Change the seeded `admin` / `admin` account password immediately.
+- Set a strong `SECRET_KEY` in production — never use the default.
+- Keep `.env` out of version control (it is in `.gitignore`).
+
+---
+
+## Credits
+
+Built for the Poway Woman's Club by student developers as part of an
+Open Coding Society project-based learning course.
