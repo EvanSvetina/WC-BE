@@ -64,3 +64,7 @@ Change the password immediately.
 | GET | `/users` | Admin | List all users |
 | PUT | `/users/:id` | Admin | Update role / membership |
 | DELETE | `/users/:id` | Admin | Delete user |
+
+## License
+
+Licensed under the MIT License. See [`LICENSE`](LICENSE).
